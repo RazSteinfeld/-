@@ -45,9 +45,15 @@
 
   /* ---------- toast ---------- */
   let toastTimer;
-  function toast(msg) {
-    const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+  let toastUndo = null;
+  function toast(msg, undo) {
+    const t = $('#toast');
+    toastUndo = undo || null;
+    t.innerHTML = esc(msg) + (undo ? ' <button type="button" class="toast-btn" data-act="toast-undo">בטל</button>' : '');
+    t.classList.toggle('has-btn', !!undo);
+    t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.classList.remove('show'); toastUndo = null; }, undo ? 6000 : 3200);
   }
 
   /* ---------- render ---------- */
@@ -77,6 +83,14 @@
           <button class="link" data-act="add">+ הוספת משמרת ידנית</button>
           ${open ? '<button class="link" data-act="edit" data-id="' + esc(open.id) + '">תיקון שעת כניסה</button>' : ''}
         </div>
+      </section>
+
+      <section class="card quick">
+        <div class="quick-head">
+          <h2>הוספה מהירה</h2>
+          <label class="quick-date"><span>תאריך</span><input type="date" id="quick-date" value="${quickDate || C.dateKey(new Date())}"></label>
+        </div>
+        <div class="presets">${PRESETS.map((p, i) => `<button type="button" class="preset" data-act="quick" data-i="${i}"><b>${p.name}</b><span class="num">${presetLabel(p)}</span></button>`).join('')}</div>
       </section>
 
       <section class="card summary">
@@ -212,6 +226,27 @@
       const on = !Number.isNaN(f.start) && f.end !== null && !Number.isNaN(f.end) &&
         clock(f.start) === `${pad(p.s)}:00` && clock(f.end) === `${pad(p.e % 24)}:00` && f.end - f.start === 8 * 3600000;
       el.classList.toggle('on', on);
+    });
+  }
+
+  let quickDate = null; // null = היום
+
+  function quickAdd(p) {
+    const key = ($('#quick-date') && $('#quick-date').value) || C.dateKey(new Date());
+    const day = C.parseKey(key);
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), p.s).getTime();
+    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), p.e).getTime();
+    if (state.shifts.some((s) => s.start === start)) { toast(`כבר יש משמרת ${p.name} בתאריך הזה`); return; }
+    const shift = { id: uid(), start, end, mode: 'auto', note: '' };
+    state.shifts.push(shift);
+    save();
+    view.y = day.getFullYear(); view.m = day.getMonth();
+    quickDate = null;
+    const c = C.computeShift(shift, state.settings);
+    render();
+    toast(`נוספה משמרת ${p.name} · ${day.toLocaleDateString('he-IL', { weekday: 'short', day: 'numeric', month: 'numeric' })} · ${money(c.pay)}`, () => {
+      state.shifts = state.shifts.filter((s) => s !== shift);
+      save(); render();
     });
   }
 
@@ -376,6 +411,8 @@
       case 'close-settings': $('#settings-dlg').close(); break;
       case 'close-shift': $('#shift-dlg').close(); break;
       case 'preset': applyPreset(PRESETS[Number(t.dataset.i)]); break;
+      case 'quick': quickAdd(PRESETS[Number(t.dataset.i)]); break;
+      case 'toast-undo': if (toastUndo) { const u = toastUndo; toastUndo = null; u(); toast('בוטל'); } break;
       case 'save-shift': saveShift(); break;
       case 'del': deleteShift(); break;
       case 'add-hol': {
@@ -404,6 +441,7 @@
   });
 
   document.addEventListener('change', (e) => {
+    if (e.target.id === 'quick-date') quickDate = e.target.value || null;
     const h = e.target.dataset.hol;
     if (h) {
       const set = new Set(state.settings.disabledHolidays);
