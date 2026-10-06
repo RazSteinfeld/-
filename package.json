@@ -1,0 +1,10 @@
+{
+  "name": "attendance-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "אפליקציית נוכחות ושכר",
+  "scripts": {
+    "test": "node --test test/core.test.js",
+    "start": "npx http-server -p 8080 -c-1"
+  }
+}
