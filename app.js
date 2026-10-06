@@ -188,16 +188,46 @@
   }
 
   /* ---------- shift dialog ---------- */
+  // משמרות קבועות: שעת התחלה וסיום (סיום מעל 24 = למחרת)
+  const PRESETS = [
+    { name: 'בוקר', s: 6, e: 14 },
+    { name: 'ערב', s: 14, e: 22 },
+    { name: 'לילה', s: 22, e: 30 },
+  ];
+  const presetLabel = (p) => `${pad(p.s)}:00–${pad(p.e % 24)}:00`;
+
+  function applyPreset(p) {
+    const cur = $('#f-start').value;
+    const day = cur ? new Date(cur) : new Date();
+    const at = (h) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), h).getTime();
+    $('#f-start').value = toInput(at(p.s));
+    $('#f-end').value = toInput(at(p.e));
+    previewShift();
+  }
+
+  function markPresets() {
+    const f = readShiftForm();
+    document.querySelectorAll('#shift-body .preset').forEach((el) => {
+      const p = PRESETS[Number(el.dataset.i)];
+      const on = !Number.isNaN(f.start) && f.end !== null && !Number.isNaN(f.end) &&
+        clock(f.start) === `${pad(p.s)}:00` && clock(f.end) === `${pad(p.e % 24)}:00` && f.end - f.start === 8 * 3600000;
+      el.classList.toggle('on', on);
+    });
+  }
+
   let editing = null; // shift object or null for new
   function openShiftDialog(shift) {
     editing = shift || null;
     const base = shift || (() => {
-      const d = new Date(); d.setHours(8, 0, 0, 0);
-      const e = new Date(d); e.setHours(16);
+      const d = new Date(); d.setHours(PRESETS[0].s, 0, 0, 0);
+      const e = new Date(d); e.setHours(PRESETS[0].e);
       return { start: d.getTime(), end: e.getTime(), mode: 'auto', note: '' };
     })();
     $('#shift-body').innerHTML = `
       <h3>${shift ? 'עריכת משמרת' : 'הוספת משמרת'}</h3>
+      <div class="field"><span>משמרת קבועה (התאריך נשאר כמו שנבחר למטה)</span>
+        <div class="presets">${PRESETS.map((p, i) => `<button type="button" class="preset" data-act="preset" data-i="${i}"><b>${p.name}</b><span class="num">${presetLabel(p)}</span></button>`).join('')}</div>
+      </div>
       <label class="field"><span>כניסה</span><input type="datetime-local" id="f-start" value="${toInput(base.start)}"></label>
       <label class="field"><span>יציאה ${shift && shift.end == null ? '(ריק = עדיין במשמרת)' : ''}</span><input type="datetime-local" id="f-end" value="${base.end == null ? '' : toInput(base.end)}"></label>
       <label class="field"><span>תעריף</span>
@@ -237,6 +267,7 @@
   function previewShift() {
     const f = readShiftForm(); const el = $('#f-prev');
     const err = validateShift(f);
+    markPresets();
     el.classList.toggle('err', !!err);
     if (err) { el.textContent = err; return; }
     const c = C.computeShift(f, state.settings);
@@ -344,6 +375,7 @@
       case 'settings': renderSettings(); $('#settings-dlg').showModal(); break;
       case 'close-settings': $('#settings-dlg').close(); break;
       case 'close-shift': $('#shift-dlg').close(); break;
+      case 'preset': applyPreset(PRESETS[Number(t.dataset.i)]); break;
       case 'save-shift': saveShift(); break;
       case 'del': deleteShift(); break;
       case 'add-hol': {
