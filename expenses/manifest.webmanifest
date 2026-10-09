@@ -4,6 +4,7 @@
   "description": "ניהול הכנסות והוצאות אישי. הנתונים נשארים בטלפון בלבד.",
   "lang": "he",
   "dir": "rtl",
+  "id": "hachnasot-vehotzaot",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
