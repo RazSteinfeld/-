@@ -91,6 +91,7 @@
           <label class="quick-date"><span>תאריך</span><input type="date" id="quick-date" value="${quickDate || C.dateKey(new Date())}"></label>
         </div>
         <div class="presets">${PRESETS.map((p, i) => `<button type="button" class="preset" data-act="quick" data-i="${i}"><b>${p.name}</b><span class="num">${presetLabel(p)}</span></button>`).join('')}</div>
+        ${(() => { const c = C.courseShift(new Date(), state.settings); return `<button type="button" class="course-btn" data-act="course"><b>קורס</b><span><span class="num">${state.settings.courseHours}</span> שעות · <span class="num">${clock(c.start)}–${clock(c.end)}</span></span></button>`; })()}
       </section>
 
       <section class="card summary">
@@ -133,6 +134,7 @@
       const endTxt = s.end == null ? '…' : clock(s.end) + (C.dateKey(new Date(s.end)) !== C.dateKey(d) ? ' (+1)' : '');
       const badges = [
         s.end == null ? '<span class="badge live">פעילה</span>' : '',
+        s.type === 'course' ? '<span class="badge course">קורס</span>' : '',
         calc.premiumMinutes > 0 ? `<span class="badge">${esc(calc.labels.join(' · ') || '150%')} · 150%</span>` : '',
       ].join('');
       return `<button class="shift" data-act="edit" data-id="${esc(s.id)}">
@@ -231,23 +233,35 @@
 
   let quickDate = null; // null = היום
 
-  function quickAdd(p) {
-    const key = ($('#quick-date') && $('#quick-date').value) || C.dateKey(new Date());
-    const day = C.parseKey(key);
-    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), p.s).getTime();
-    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), p.e).getTime();
-    if (state.shifts.some((s) => s.start === start)) { toast(`כבר יש משמרת ${p.name} בתאריך הזה`); return; }
-    const shift = { id: uid(), start, end, mode: 'auto', note: '' };
+  const quickDay = () => C.parseKey(($('#quick-date') && $('#quick-date').value) || C.dateKey(new Date()));
+
+  // מוסיף משמרת מוכנה ליום הנבחר, עם הודעת ביטול
+  function quickCommit(shift, label, day) {
     state.shifts.push(shift);
     save();
     view.y = day.getFullYear(); view.m = day.getMonth();
     quickDate = null;
     const c = C.computeShift(shift, state.settings);
     render();
-    toast(`נוספה משמרת ${p.name} · ${day.toLocaleDateString('he-IL', { weekday: 'short', day: 'numeric', month: 'numeric' })} · ${money(c.pay)}`, () => {
+    toast(`${label} · ${day.toLocaleDateString('he-IL', { weekday: 'short', day: 'numeric', month: 'numeric' })} · ${money(c.pay)}`, () => {
       state.shifts = state.shifts.filter((s) => s !== shift);
       save(); render();
     });
+  }
+
+  function quickAdd(p) {
+    const day = quickDay();
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), p.s).getTime();
+    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), p.e).getTime();
+    if (state.shifts.some((s) => s.start === start)) { toast(`כבר יש משמרת ${p.name} בתאריך הזה`); return; }
+    quickCommit({ id: uid(), start, end, mode: 'auto', note: '' }, `נוספה משמרת ${p.name}`, day);
+  }
+
+  function quickCourse() {
+    const day = quickDay();
+    const key = C.dateKey(day);
+    if (state.shifts.some((s) => s.type === 'course' && C.dateKey(new Date(s.start)) === key)) { toast('כבר יש יום קורס בתאריך הזה'); return; }
+    quickCommit({ id: uid(), note: '', ...C.courseShift(day, state.settings) }, 'נוסף יום קורס', day);
   }
 
   let editing = null; // shift object or null for new
@@ -349,6 +363,11 @@
         <label class="field"><span>נקודות זיכוי</span><input type="number" inputmode="decimal" step="0.25" min="0" data-set="creditPoints" value="${s.creditPoints}"></label>
         <label class="field"><span>פנסיה – הפרשת עובד (%)</span><input type="number" inputmode="decimal" step="0.1" min="0" data-set="pensionPct" value="${s.pensionPct}"></label>
       </div>
+      <div class="sect">יום קורס (בתעריף רגיל)</div>
+      <div class="grid2">
+        <label class="field"><span>שעות ליום קורס</span><input type="number" inputmode="decimal" step="0.5" min="0" data-set="courseHours" value="${s.courseHours}"></label>
+        <label class="field"><span>שעת התחלה</span><input type="time" data-set="courseStart" value="${s.courseStart}"></label>
+      </div>
       <div class="sect">חגים ${view.y} (מזוהים אוטומטית)</div>
       <div>${hols.map(row).join('') || '<div class="empty">אין חגים</div>'}
         <div class="add-hol"><input type="date" id="hol-date"><button class="btn" data-act="add-hol">הוסף יום חג</button></div>
@@ -375,7 +394,7 @@
     const q = (v) => '"' + String(v).replace(/"/g, '""') + '"';
     const lines = [['תאריך', 'כניסה', 'יציאה', 'שעות', 'שעות 150%', 'שכר', 'הערה'].map(q).join(',')];
     for (const { shift: s, calc } of [...sum.rows].reverse()) {
-      lines.push([C.dateKey(new Date(s.start)), clock(s.start), s.end == null ? '' : clock(s.end), hmm(calc.minutes), hmm(calc.premiumMinutes), calc.pay.toFixed(2), s.note || ''].map(q).join(','));
+      lines.push([C.dateKey(new Date(s.start)), clock(s.start), s.end == null ? '' : clock(s.end), hmm(calc.minutes), hmm(calc.premiumMinutes), calc.pay.toFixed(2), [s.type === 'course' ? 'קורס' : '', s.note || ''].filter(Boolean).join(' – ')].map(q).join(','));
     }
     lines.push(['סה"כ ברוטו', '', '', hmm(sum.minutes), hmm(sum.premiumMinutes), sum.gross.toFixed(2), ''].map(q).join(','));
     lines.push(['נטו משוער', '', '', '', '', sum.net.toFixed(2), ''].map(q).join(','));
@@ -389,7 +408,7 @@
         const o = JSON.parse(r.result);
         if (!o || !Array.isArray(o.shifts)) throw new Error('bad');
         const clean = o.shifts.filter((s) => Number.isFinite(s.start) && (s.end == null || Number.isFinite(s.end)))
-          .map((s) => ({ id: String(s.id || uid()), start: s.start, end: s.end ?? null, mode: s.mode || 'auto', note: String(s.note || '') }));
+          .map((s) => ({ id: String(s.id || uid()), start: s.start, end: s.end ?? null, mode: s.mode || 'auto', note: String(s.note || ''), ...(s.type === 'course' ? { type: 'course' } : {}) }));
         if (!confirm(`לשחזר ${clean.length} משמרות? הנתונים הנוכחיים יוחלפו.`)) return;
         state = { settings: { ...clone(C.DEFAULT_SETTINGS), ...o.settings }, shifts: clean };
         save(); renderSettings(); render(); toast('הגיבוי שוחזר');
@@ -412,6 +431,7 @@
       case 'close-shift': $('#shift-dlg').close(); break;
       case 'preset': applyPreset(PRESETS[Number(t.dataset.i)]); break;
       case 'quick': quickAdd(PRESETS[Number(t.dataset.i)]); break;
+      case 'course': quickCourse(); break;
       case 'toast-undo': if (toastUndo) { const u = toastUndo; toastUndo = null; u(); toast('בוטל'); } break;
       case 'save-shift': saveShift(); break;
       case 'del': deleteShift(); break;

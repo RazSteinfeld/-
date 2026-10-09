@@ -57,6 +57,21 @@ test('משמרות קבועות: בוקר, ערב ולילה', () => {
   close(C.computeShift({ start: at(2026, 10, 8, 22), end: at(2026, 10, 9, 6) }, S0).pay, 8 * 44);
 });
 
+test('יום קורס: 10 שעות בתעריף רגיל, גם בשישי', () => {
+  const tue = C.courseShift(new Date(2026, 9, 6), S());
+  assert.equal(tue.type, 'course');
+  assert.equal(new Date(tue.end).getHours(), 18);
+  close(C.computeShift(tue, S()).pay, 10 * 44);
+  // שישי: 08:00–18:00 – חלק מהשעות בתוך חלון שבת, אבל קורס תמיד רגיל
+  const fri = C.courseShift(new Date(2026, 9, 9), S());
+  close(C.computeShift(fri, S()).pay, 10 * 44);
+  const s = S(); s.courseHours = 8; s.courseStart = '09:30';
+  const c = C.courseShift(new Date(2026, 9, 6), s);
+  assert.equal(new Date(c.start).getHours(), 9);
+  assert.equal(new Date(c.end).getHours(), 17);
+  assert.equal(new Date(c.end).getMinutes(), 30);
+});
+
 test('חגי תשפ"ז מזוהים נכון', () => {
   const keys = C.holidayList(2026, S()).map((h) => h.key);
   for (const k of ['2026-09-12', '2026-09-13', '2026-09-21', '2026-09-26', '2026-10-03']) {

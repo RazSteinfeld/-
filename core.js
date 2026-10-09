@@ -13,6 +13,8 @@
     premiumEnd: '04:00',     // ראשון / מוצאי חג – סיום התעריף המוגדל
     creditPoints: 2.25,      // נקודות זיכוי (2.25 = תושב ישראל גבר, 2.75 = אישה)
     pensionPct: 6,           // הפרשת עובד לפנסיה (%)
+    courseHours: 10,         // אורך יום קורס (שעות), בתעריף רגיל
+    courseStart: '08:00',    // שעת התחלה של יום קורס
     disabledHolidays: [],    // חגים שזוהו אוטומטית ומבוטלים ידנית (YYYY-MM-DD)
     extraHolidays: [],       // ימי חג שנוספו ידנית (YYYY-MM-DD)
   };
@@ -147,6 +149,13 @@
     };
   }
 
+  /** יום קורס: משך קבוע בתעריף רגיל (ללא תוספת שבת/חג). day = Date של היום */
+  function courseShift(day, settings) {
+    const [h, m] = hm(settings.courseStart);
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m).getTime();
+    return { start, end: start + settings.courseHours * 3600000, mode: 'regular', type: 'course' };
+  }
+
   /* ---------- ברוטו → נטו ---------- */
   function netFromGross(gross, settings) {
     const g = Math.max(0, gross);
@@ -187,6 +196,6 @@
   return {
     DEFAULT_SETTINGS, TAX, HOLIDAYS,
     dateKey, parseKey, holidayList, holidayName, premiumWindows, mergeWindows,
-    computeShift, netFromGross, monthSummary,
+    computeShift, courseShift, netFromGross, monthSummary,
   };
 });

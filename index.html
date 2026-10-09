@@ -151,6 +151,14 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 }
 .preset b { font-size: 16px; }
 .preset span { font-size: 12px; color: var(--muted); }
+.course-btn {
+  display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 12px 16px; border-radius: 14px;
+  border: 1.5px dashed var(--money); background: var(--money-soft); color: var(--money);
+}
+.course-btn b { font-size: 16px; }
+.course-btn span { font-size: 13px; opacity: .9; }
+.course-btn:active { transform: scale(.98); }
+.badge.course { background: var(--money-soft); color: var(--money); }
 .preset.on { border-color: var(--accent); background: var(--accent-soft); }
 .preset:active { transform: scale(.97); }
 .preview { background: var(--accent-soft); border-radius: 14px; padding: 10px 14px; font-size: 14px; min-height: 42px; }
