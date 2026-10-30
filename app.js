@@ -13,18 +13,52 @@
   function load() {
     try {
       const o = JSON.parse(localStorage.getItem(KEY));
-      if (o) return { settings: { ...clone(C.DEFAULT_SETTINGS), ...o.settings }, shifts: Array.isArray(o.shifts) ? o.shifts : [] };
+      if (o) {
+        return {
+          settings: { ...clone(C.DEFAULT_SETTINGS), ...o.settings },
+          shifts: Array.isArray(o.shifts) ? o.shifts : [],
+          deleted: o.deleted && typeof o.deleted === 'object' ? o.deleted : {},
+          settingsAt: Number(o.settingsAt) || 0,
+        };
+      }
     } catch (e) { /* ignore */ }
-    return { settings: clone(C.DEFAULT_SETTINGS), shifts: [] };
+    return { settings: clone(C.DEFAULT_SETTINGS), shifts: [], deleted: {}, settingsAt: 0 };
   }
   let state = load();
   const today = new Date();
   const view = { y: today.getFullYear(), m: today.getMonth() };
 
-  function save() {
+  /* תיוג שינויים לסנכרון: לכל משמרת u = זמן עדכון, מחיקות נרשמות כ"מצבה", והגדרות – settingsAt */
+  const snap = { shifts: new Map(), settings: '' };
+  const shiftJson = (sh) => { const { u, ...rest } = sh; return JSON.stringify(rest); };
+  function resnap() {
+    snap.shifts = new Map(state.shifts.map((sh) => [sh.id, shiftJson(sh)]));
+    snap.settings = JSON.stringify(state.settings);
+  }
+  function stamp() {
+    const now = Date.now(), seen = new Set();
+    for (const sh of state.shifts) {
+      seen.add(sh.id);
+      const j = shiftJson(sh);
+      if (snap.shifts.get(sh.id) !== j) { sh.u = now; snap.shifts.set(sh.id, j); }
+    }
+    for (const id of [...snap.shifts.keys()]) {
+      if (!seen.has(id)) { snap.shifts.delete(id); state.deleted[id] = now; }
+    }
+    const sj = JSON.stringify(state.settings);
+    if (sj !== snap.settings) { state.settingsAt = now; snap.settings = sj; }
+  }
+  function persist() {
     try { localStorage.setItem(KEY, JSON.stringify(state)); }
     catch (e) { toast('לא ניתן לשמור – האחסון בדפדפן חסום'); }
   }
+  let saveSeq = 0;
+  function save() {
+    stamp(); persist(); saveSeq++;
+    const cfg = Sync.getConfig();
+    if (cfg) { if (!cfg.dirty) { cfg.dirty = true; Sync.setConfig(cfg); } scheduleSync(); }
+  }
+  resnap();
   const openShift = () => state.shifts.find((s) => s.end == null);
 
   /* ---------- format ---------- */
@@ -42,6 +76,7 @@
   const ICON = {
     prev: '<svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>',
     next: '<svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>',
+    cloud: '<svg viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.7-7.94A6 6 0 0 1 17.7 8.5 4.5 4.5 0 0 1 17.5 18z"/></svg>',
     gear: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
   };
 
@@ -58,8 +93,116 @@
     toastTimer = setTimeout(() => { t.classList.remove('show'); toastUndo = null; }, undo ? 6000 : 3200);
   }
 
+  /* ---------- סנכרון לענן ---------- */
+  const cloud = { status: 'off', msg: '' }; // off | idle | syncing | error | offline
+  let syncing = false, syncAgain = false, syncTimer = null;
+  const dataForSync = () => ({ v: 1, settings: state.settings, settingsAt: state.settingsAt, shifts: state.shifts, deleted: state.deleted });
+
+  function setCloud(status, msg = '') { cloud.status = status; cloud.msg = msg; renderCloudUI(); }
+
+  function renderCloudUI() {
+    const cfg = Sync.getConfig();
+    const ind = $('#sync-ind');
+    if (ind) {
+      ind.className = 'icon-btn sync ' + ({ syncing: 'busy', error: 'err', offline: 'warn' }[cloud.status] || 'ok');
+      ind.title = cloudLine(cfg);
+    }
+    const el = $('#cloud-status');
+    if (el) { el.textContent = cloudLine(cfg); el.className = 'cloud-status ' + (cloud.status === 'error' ? 'err' : ''); }
+  }
+
+  function cloudLine(cfg) {
+    if (!cfg) return '';
+    if (cloud.status === 'syncing') return 'מסנכרן…';
+    if (cloud.status === 'error') return cloud.msg || 'שגיאה בסנכרון';
+    if (cloud.status === 'offline') return 'אין חיבור לאינטרנט – יישמר בענן כשהחיבור יחזור';
+    return `מחובר ל-GitHub (${cfg.login || ''}) · ` + (cfg.lastSync ? 'סונכרן לאחרונה ב-' + clock(cfg.lastSync) : 'עדיין לא סונכרן');
+  }
+
+  function scheduleSync(delay = 2500) {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncNow, delay);
+  }
+
+  // מחיל נתונים מאוחדים על המצב הנוכחי (משמרות קיימות מתעדכנות במקום, כדי שחלון עריכה פתוח לא יתנתק)
+  function applyMerged(m) {
+    const local = new Map(state.shifts.map((sh) => [sh.id, sh]));
+    state.shifts = m.shifts
+      .filter((r) => r && r.id != null && Number.isFinite(r.start))
+      .map((r) => {
+        const l = local.get(r.id);
+        if (!l) return { ...r };
+        const copy = { ...r }; // r יכול להיות אותו אובייקט כמו l, לכן מעתיקים לפני שמרוקנים
+        for (const k of Object.keys(l)) delete l[k];
+        return Object.assign(l, copy);
+      });
+    state.settings = { ...clone(C.DEFAULT_SETTINGS), ...m.settings };
+    state.settingsAt = m.settingsAt; state.deleted = m.deleted;
+    resnap(); persist(); render();
+  }
+
+  async function syncNow() {
+    let cfg = Sync.getConfig();
+    if (!cfg) return;
+    if (syncing) { syncAgain = true; return; }
+    if (!navigator.onLine) { setCloud('offline'); return; }
+    syncing = true; clearTimeout(syncTimer);
+    const seq = saveSeq;
+    setCloud('syncing');
+    try {
+      const pr = await Sync.pull(cfg);
+      let etag = pr.notModified ? cfg.etag : pr.etag;
+      let toPush = null;
+      if (!pr.notModified) {
+        const merged = C.mergeData(dataForSync(), pr.data);
+        if (!C.sameData(merged, dataForSync())) applyMerged(merged);
+        if (!C.sameData(merged, pr.data)) toPush = dataForSync();
+      } else if (cfg.dirty) {
+        toPush = dataForSync();
+      }
+      if (toPush) etag = (await Sync.push(cfg, toPush)).etag;
+      cfg = Sync.getConfig();
+      if (cfg) { Sync.setConfig({ ...cfg, etag, lastSync: Date.now(), dirty: saveSeq !== seq }); setCloud('idle'); }
+    } catch (e) {
+      setCloud(e.code === 'network' ? 'offline' : 'error', e.message);
+    } finally {
+      syncing = false;
+      if (syncAgain || saveSeq !== seq) { syncAgain = false; scheduleSync(1500); }
+    }
+  }
+
+  async function cloudConnect() {
+    const msg = (t) => { const el = $('#cloud-msg'); if (el) el.textContent = t; };
+    const token = ($('#cloud-token') || {}).value || '';
+    msg('מתחבר…');
+    try {
+      const { login, gistId } = await Sync.connect(token);
+      const cfg = { token: token.trim(), login, gistId, etag: null, lastSync: 0, dirty: false };
+      if (!gistId) {
+        const r = await Sync.create(cfg.token, dataForSync());
+        Sync.setConfig({ ...cfg, gistId: r.gistId, etag: r.etag, lastSync: Date.now() });
+        setCloud('idle');
+        toast('הגיבוי בענן הופעל');
+      } else {
+        Sync.setConfig(cfg);
+        await syncNow();
+        toast(cloud.status === 'idle' ? 'נמצא גיבוי קיים – הנתונים אוחדו' : (cloud.msg || 'הסנכרון נכשל'));
+      }
+      renderSettings(); render();
+    } catch (e) { msg(e.message); }
+  }
+
+  function cloudDisconnect() {
+    if (!confirm('לנתק את הגיבוי בענן? הנתונים שכבר בענן יישארו, אבל שינויים חדשים לא יישמרו שם.')) return;
+    Sync.setConfig(null); clearTimeout(syncTimer); setCloud('off');
+    renderSettings(); render(); toast('נותק מהענן');
+  }
+
+  const cloudBannerOff = () => { try { return localStorage.getItem('attendance.banner') === '0'; } catch (e) { return false; } };
+
   /* ---------- render ---------- */
   function render() {
+    const cloudOn = !!Sync.getConfig();
     const open = openShift();
     const sum = C.monthSummary(state.shifts, view.y, view.m, state.settings);
     $('#app').innerHTML = `
@@ -69,8 +212,15 @@
           <h1>${esc(monthTitle())}</h1>
           <button class="icon-btn" data-act="month" data-d="1" aria-label="חודש הבא">${ICON.next}</button>
         </div>
-        <button class="icon-btn" data-act="settings" aria-label="הגדרות">${ICON.gear}</button>
+        <div class="bar-right">
+          ${cloudOn ? `<button class="icon-btn sync ok" id="sync-ind" data-act="settings" aria-label="גיבוי בענן">${ICON.cloud}<i class="sync-dot"></i></button>` : ''}
+          <button class="icon-btn" data-act="settings" aria-label="הגדרות">${ICON.gear}</button>
+        </div>
       </div>
+      ${!cloudOn && !cloudBannerOff() ? `<section class="card cloud-banner">
+        <div>הנתונים שמורים רק בטלפון הזה. הפעל גיבוי בענן כדי שלא יאבדו.</div>
+        <div class="cloud-banner-act"><button class="btn primary" data-act="settings">הפעלה</button><button class="link-x" data-act="banner-off" aria-label="סגירה">×</button></div>
+      </section>` : ''}
 
       <section class="hero">
         <div class="hero-top">
@@ -124,6 +274,7 @@
       <section class="card" id="list">${renderList(sum)}</section>
     `;
     updateLive();
+    renderCloudUI();
   }
 
   function renderList(sum) {
@@ -387,7 +538,9 @@
       <div>${hols.map(row).join('') || '<div class="empty">אין חגים</div>'}
         <div class="add-hol"><input type="date" id="hol-date"><button class="btn" data-act="add-hol">הוסף יום חג</button></div>
       </div>
-      <div class="sect">גיבוי</div>
+      <div class="sect">גיבוי בענן (GitHub)</div>
+      ${cloudCard()}
+      <div class="sect">גיבוי לקובץ</div>
       <div class="actions">
         <button class="btn" data-act="export">ייצוא גיבוי</button>
         <button class="btn" data-act="import">ייבוא גיבוי</button>
@@ -395,6 +548,29 @@
       </div>
       <input type="file" id="import-file" accept="application/json" hidden>
       <div class="actions"><button class="btn primary" data-act="close-settings">סגירה</button></div>`;
+  }
+
+  function cloudCard() {
+    const cfg = Sync.getConfig();
+    if (cfg) {
+      return `<div class="cloud-card">
+        <div id="cloud-status" class="cloud-status">${esc(cloudLine(cfg))}</div>
+        <p class="note">השינויים נשמרים אוטומטית. אפשר להתחבר עם אותו טוקן גם מטלפון נוסף והנתונים יתאחדו.</p>
+        <div class="actions"><button class="btn" data-act="cloud-sync">סנכרן עכשיו</button><button class="btn danger" data-act="cloud-off">ניתוק</button></div>
+      </div>`;
+    }
+    return `<div class="cloud-card">
+      <p>הנתונים נשמרים אוטומטית ב-Gist פרטי בחשבון ה-GitHub שלך, ואפשר לשחזר אותם בכל מכשיר. הגדרה חד-פעמית:</p>
+      <ol>
+        <li>לחץ <a href="${Sync.TOKEN_URL}" target="_blank" rel="noopener">כאן ליצירת טוקן</a>, התחבר ל-GitHub, ובשדה Expiration בחר <b>No expiration</b>.</li>
+        <li>לחץ <b>Generate token</b> והעתק את הטוקן (מתחיל ב-<span class="num">ghp_</span>).</li>
+        <li>הדבק אותו כאן ולחץ <b>התחברות</b>.</li>
+      </ol>
+      <input type="password" id="cloud-token" placeholder="הדבק כאן את הטוקן" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <div id="cloud-msg" class="cloud-msg" role="status"></div>
+      <button class="btn primary" data-act="cloud-connect">התחברות</button>
+      <p class="note">הטוקן נשמר רק בטלפון הזה. אפשר לבטל אותו בכל רגע ב-github.com/settings/tokens.</p>
+    </div>`;
   }
 
   function download(name, text, type) {
@@ -425,7 +601,7 @@
         const clean = o.shifts.filter((s) => Number.isFinite(s.start) && (s.end == null || Number.isFinite(s.end)))
           .map((s) => ({ id: String(s.id || uid()), start: s.start, end: s.end ?? null, mode: s.mode || 'auto', ...(s.mode === 'custom' ? { pct: Number(s.pct) || 100 } : {}), note: String(s.note || ''), ...(s.type === 'course' ? { type: 'course' } : {}) }));
         if (!confirm(`לשחזר ${clean.length} משמרות? הנתונים הנוכחיים יוחלפו.`)) return;
-        state = { settings: { ...clone(C.DEFAULT_SETTINGS), ...o.settings }, shifts: clean };
+        state = { settings: { ...clone(C.DEFAULT_SETTINGS), ...o.settings }, shifts: clean, deleted: { ...state.deleted }, settingsAt: state.settingsAt };
         save(); renderSettings(); render(); toast('הגיבוי שוחזר');
       } catch (e) { toast('קובץ גיבוי לא תקין'); }
     };
@@ -460,6 +636,10 @@
       case 'export': download(`attendance-backup-${C.dateKey(new Date())}.json`, JSON.stringify(state, null, 2), 'application/json'); break;
       case 'import': $('#import-file').click(); break;
       case 'csv': exportCsv(); break;
+      case 'cloud-connect': cloudConnect(); break;
+      case 'cloud-sync': syncNow(); break;
+      case 'cloud-off': cloudDisconnect(); break;
+      case 'banner-off': try { localStorage.setItem('attendance.banner', '0'); } catch (err) { /* ignore */ } render(); break;
     }
   });
 
@@ -489,7 +669,13 @@
   /* ---------- boot ---------- */
   render();
   setInterval(updateLive, 1000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) updateLive(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { updateLive(); if (Sync.getConfig()) syncNow(); }
+    else if (Sync.getConfig()) { clearTimeout(syncTimer); syncNow(); } // נשמר מיד כשעוברים לאפליקציה אחרת
+  });
+  window.addEventListener('online', () => { if (Sync.getConfig()) syncNow(); });
+  setInterval(() => { if (!document.hidden && Sync.getConfig()) syncNow(); }, 60000);
+  if (Sync.getConfig()) syncNow();
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     // כשגרסה חדשה של האפליקציה מותקנת – לטעון מחדש פעם אחת כדי להציג אותה מיד

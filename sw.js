@@ -1,5 +1,5 @@
-const CACHE = 'attendance-v2';
-const ASSETS = ['./', 'index.html', 'core.js', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
+const CACHE = 'attendance-v3';
+const ASSETS = ['./', 'index.html', 'core.js', 'sync.js', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {
   // cache: 'reload' – תמיד מהשרת, לא מהזיכרון הזמני של הדפדפן (למניעת קבצים ישנים)
@@ -21,6 +21,8 @@ self.addEventListener('activate', (e) => {
 // ומטמון כגיבוי לעבודה בלי אינטרנט
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  // רק קבצי האפליקציה עצמה. בקשות לאתרים אחרים (למשל api.github.com לסנכרון) עוברות ישירות
+  if (new URL(e.request.url).origin !== self.location.origin) return;
   e.respondWith(
     fetch(e.request, { cache: 'no-cache' })
       .then((res) => {

@@ -193,8 +193,41 @@
     };
   }
 
+  /* ---------- איחוד נתונים בין מכשירים (סנכרון ענן) ----------
+     data: {settings, settingsAt, shifts: [{id, u, ...}], deleted: {id: ts}}
+     u = זמן העדכון האחרון של המשמרת; deleted = "מצבות" של משמרות שנמחקו. */
+  function mergeData(a, b) {
+    const deleted = { ...(a.deleted || {}) };
+    for (const [id, t] of Object.entries(b.deleted || {})) deleted[id] = Math.max(deleted[id] || 0, t);
+    const byId = new Map();
+    for (const s of [...(a.shifts || []), ...(b.shifts || [])]) {
+      const cur = byId.get(s.id);
+      if (!cur || (s.u || 0) > (cur.u || 0)) byId.set(s.id, s); // בשוויון a (המקומי) מנצח
+    }
+    const shifts = [...byId.values()].filter((s) => !(deleted[s.id] > (s.u || 0)));
+    const useB = (b.settingsAt || 0) > (a.settingsAt || 0);
+    return {
+      settings: useB ? b.settings : a.settings,
+      settingsAt: Math.max(a.settingsAt || 0, b.settingsAt || 0),
+      shifts, deleted,
+    };
+  }
+
+  /** האם שני אוספי נתונים זהים מבחינת סנכרון (אותן משמרות, גרסאות, מחיקות והגדרות) */
+  function sameData(a, b) {
+    if ((a.settingsAt || 0) !== (b.settingsAt || 0)) return false;
+    const sa = a.shifts || [], sb = b.shifts || [];
+    if (sa.length !== sb.length) return false;
+    const mb = new Map(sb.map((s) => [s.id, s.u || 0]));
+    if (!sa.every((s) => mb.get(s.id) === (s.u || 0))) return false;
+    const da = a.deleted || {}, db = b.deleted || {};
+    const ka = Object.keys(da);
+    return ka.length === Object.keys(db).length && ka.every((k) => da[k] === db[k]);
+  }
+
   return {
     DEFAULT_SETTINGS, TAX, HOLIDAYS,
+    mergeData, sameData,
     dateKey, parseKey, holidayList, holidayName, premiumWindows, mergeWindows,
     computeShift, netFromGross, monthSummary,
   };

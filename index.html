@@ -142,6 +142,23 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 .quick-head h2 { font-size: 16px; margin: 0; font-weight: 700; }
 .quick-date { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
 .quick-date input { width: auto; min-height: 38px; padding: 6px 10px; font-size: 14px; }
+/* ענן */
+.bar-right { display: flex; gap: 8px; }
+.icon-btn.sync { position: relative; }
+.sync-dot { position: absolute; top: 7px; inset-inline-end: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--money); border: 2px solid var(--card); }
+.sync.busy .sync-dot { background: var(--accent); animation: pulse 1.2s infinite; }
+.sync.warn .sync-dot { background: var(--prem); }
+.sync.err .sync-dot { background: var(--danger); }
+.cloud-banner { padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; background: var(--accent-soft); border-color: transparent; }
+.cloud-banner .btn { flex: none; padding: 9px 16px; }
+.cloud-banner-act { display: flex; align-items: center; gap: 6px; }
+.link-x { border: 0; background: none; font-size: 22px; line-height: 1; color: var(--muted); padding: 4px 8px; }
+.cloud-card { background: var(--bg); border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: grid; gap: 10px; font-size: 14px; }
+.cloud-card p { margin: 0; } .cloud-card ol { margin: 0; padding-inline-start: 20px; display: grid; gap: 4px; }
+.cloud-card a { color: var(--accent); font-weight: 600; }
+.cloud-card .note { margin: 0; }
+.cloud-status { font-weight: 600; } .cloud-status.err, .cloud-msg { color: var(--danger); }
+.cloud-msg:empty { display: none; }
 .toast.has-btn { pointer-events: auto; }
 .toast-btn { margin-inline-start: 10px; border: 0; border-radius: 10px; padding: 4px 12px; font-weight: 700; background: #fff; color: #2b3a9e; }
 .presets { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
@@ -185,6 +202,7 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="core.js"></script>
+<script src="sync.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

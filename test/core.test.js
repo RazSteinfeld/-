@@ -167,3 +167,56 @@ test('סיכום חודשי מסנן לפי חודש וממיין מהחדש ל�
   assert.equal(m.rows[0].shift.id, 'b');
   close(m.gross, 12 * 44);
 });
+
+/* ---------- איחוד סנכרון ---------- */
+const sh = (id, u, extra = {}) => ({ id, u, start: 1000 * u, end: 1000 * u + 3600000, ...extra });
+
+test('איחוד: משמרות משני מכשירים מתחברות', () => {
+  const a = { shifts: [sh('a', 1)], deleted: {}, settings: { rate: 44 }, settingsAt: 0 };
+  const b = { shifts: [sh('b', 2)], deleted: {}, settings: { rate: 44 }, settingsAt: 0 };
+  const m = C.mergeData(a, b);
+  assert.deepEqual(m.shifts.map((s) => s.id).sort(), ['a', 'b']);
+});
+
+test('איחוד: הגרסה העדכנית של אותה משמרת מנצחת', () => {
+  const a = { shifts: [sh('x', 5, { note: 'ישן' })], deleted: {}, settings: {}, settingsAt: 0 };
+  const b = { shifts: [sh('x', 9, { note: 'חדש' })], deleted: {}, settings: {}, settingsAt: 0 };
+  assert.equal(C.mergeData(a, b).shifts[0].note, 'חדש');
+  assert.equal(C.mergeData(b, a).shifts[0].note, 'חדש');
+});
+
+test('איחוד: מחיקה חדשה יותר מהעדכון מוחקת, ועדכון חדש יותר ממחיקה משחזר', () => {
+  const kept = { shifts: [sh('x', 5)], deleted: {}, settings: {}, settingsAt: 0 };
+  const del = { shifts: [], deleted: { x: 8 }, settings: {}, settingsAt: 0 };
+  assert.equal(C.mergeData(kept, del).shifts.length, 0);
+  assert.equal(C.mergeData(del, kept).shifts.length, 0);
+  const edited = { shifts: [sh('x', 12)], deleted: {}, settings: {}, settingsAt: 0 };
+  assert.equal(C.mergeData(edited, del).shifts.length, 1);
+});
+
+test('איחוד: הגדרות – העדכניות מנצחות; בשוויון המקומיות', () => {
+  const a = { shifts: [], deleted: {}, settings: { rate: 44 }, settingsAt: 5 };
+  const b = { shifts: [], deleted: {}, settings: { rate: 50 }, settingsAt: 9 };
+  assert.equal(C.mergeData(a, b).settings.rate, 50);
+  assert.equal(C.mergeData(b, a).settings.rate, 50);
+  const c = { ...b, settings: { rate: 60 }, settingsAt: 9 };
+  assert.equal(C.mergeData(b, c).settings.rate, 50);
+});
+
+test('איחוד: מכשיר חדש וריק מקבל את כל הנתונים מהענן', () => {
+  const empty = { shifts: [], deleted: {}, settings: { rate: 44 }, settingsAt: 0 };
+  const cloud = { shifts: [sh('a', 1), sh('b', 2)], deleted: {}, settings: { rate: 52 }, settingsAt: 7 };
+  const m = C.mergeData(empty, cloud);
+  assert.equal(m.shifts.length, 2);
+  assert.equal(m.settings.rate, 52);
+  assert.ok(C.sameData(m, cloud));
+});
+
+test('sameData: מזהה הבדלים', () => {
+  const a = { shifts: [sh('a', 1)], deleted: { z: 3 }, settingsAt: 2 };
+  assert.ok(C.sameData(a, JSON.parse(JSON.stringify(a))));
+  assert.ok(!C.sameData(a, { ...a, shifts: [sh('a', 2)] }));
+  assert.ok(!C.sameData(a, { ...a, deleted: {} }));
+  assert.ok(!C.sameData(a, { ...a, settingsAt: 3 }));
+  assert.ok(!C.sameData(a, { ...a, shifts: [] }));
+});
