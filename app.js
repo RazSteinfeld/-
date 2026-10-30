@@ -29,6 +29,8 @@
 
   /* ---------- format ---------- */
   const money = (n) => '₪' + n.toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // אחוז בתוך טקסט עברי: מבודד כדי שהסימן % לא יתהפך (למשל "ב-125%")
+  const pctTxt = (p) => '\u2066' + p + '%\u2069';
   const hmm = (min) => { const m = Math.round(min); return `${Math.floor(m / 60)}:${pad(m % 60)}`; };
   const clock = (ms) => { const d = new Date(ms); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; };
   const hms = (ms) => { const t = Math.max(0, Math.floor(ms / 1000)); return `${pad(Math.floor(t / 3600))}:${pad(Math.floor(t / 60) % 60)}:${pad(t % 60)}`; };
@@ -91,7 +93,6 @@
           <label class="quick-date"><span>תאריך</span><input type="date" id="quick-date" value="${quickDate || C.dateKey(new Date())}"></label>
         </div>
         <div class="presets">${PRESETS.map((p, i) => `<button type="button" class="preset" data-act="quick" data-i="${i}"><b>${p.name}</b><span class="num">${presetLabel(p)}</span></button>`).join('')}</div>
-        ${(() => { const c = C.courseShift(new Date(), state.settings); return `<button type="button" class="course-btn" data-act="course"><b>קורס</b><span><span class="num">${state.settings.courseHours}</span> שעות · <span class="num">${clock(c.start)}–${clock(c.end)}</span></span></button>`; })()}
       </section>
 
       <section class="card summary">
@@ -101,14 +102,13 @@
         </div>
         <div class="chips">
           <span class="chip">⏱ <b class="num" id="s-hours"></b> שעות</span>
-          <span class="chip prem">150%: <b class="num" id="s-prem"></b></span>
+          <span class="chip prem">בתוספת שכר: <b class="num" id="s-prem"></b></span>
           <span class="chip">משמרות: <b id="s-count"></b></span>
         </div>
         <details>
           <summary>פירוט שכר וניכויים</summary>
           <table class="breakdown">
-            <tr><td>שעות רגילות (<span class="num" id="b-reg-h"></span>)</td><td class="num" id="b-reg"></td></tr>
-            <tr><td>שבת/חג (<span class="num" id="b-prem-h"></span>)</td><td class="num" id="b-prem"></td></tr>
+            <tbody id="b-rows"></tbody>
             <tr class="tot"><td>ברוטו</td><td class="num" id="b-gross"></td></tr>
             <tr class="sub"><td>מס הכנסה</td><td class="num" id="b-tax"></td></tr>
             <tr class="sub"><td>ביטוח לאומי</td><td class="num" id="b-ni"></td></tr>
@@ -135,7 +135,7 @@
       const badges = [
         s.end == null ? '<span class="badge live">פעילה</span>' : '',
         s.type === 'course' ? '<span class="badge course">קורס</span>' : '',
-        calc.premiumMinutes > 0 ? `<span class="badge">${esc(calc.labels.join(' · ') || '150%')} · 150%</span>` : '',
+        premBadge(s, calc),
       ].join('');
       return `<button class="shift" data-act="edit" data-id="${esc(s.id)}">
         <div class="date-chip"><b>${d.getDate()}</b><span>${esc(wd)}</span></div>
@@ -146,6 +146,14 @@
         <div class="pay num" id="pay-${esc(s.id)}">${money(calc.pay)}</div>
       </button>`;
     }).join('');
+  }
+
+  function premBadge(s, calc) {
+    const prem = calc.parts.filter((p) => p.pct > 100);
+    if (!prem.length) return '';
+    const pct = prem.map((p) => p.pct).join('/');
+    if (s.mode === 'custom' || s.mode === 'premium') return `<span class="badge">${pctTxt(pct)} · ידני</span>`;
+    return `<span class="badge">${esc(calc.labels.join(' · '))} · ${pctTxt(pct)}</span>`;
   }
 
   const setText = (id, v) => { const el = document.getElementById(id); if (el && el.textContent !== v) el.textContent = v; };
@@ -171,10 +179,15 @@
     setText('s-hours', hmm(sum.minutes));
     setText('s-prem', hmm(sum.premiumMinutes));
     setText('s-count', String(sum.count));
-    setText('b-reg-h', hmm(sum.regularMinutes));
-    setText('b-prem-h', hmm(sum.premiumMinutes));
-    setText('b-reg', money(sum.regularMinutes / 60 * state.settings.rate));
-    setText('b-prem', money(sum.premiumMinutes / 60 * state.settings.rate * state.settings.premiumPct / 100));
+    const rowsEl = $('#b-rows');
+    if (rowsEl) {
+      const pcts = Object.keys(sum.byPct).map(Number).sort((a, b) => a - b);
+      const html = (pcts.length ? pcts : [100]).map((pct) => {
+        const min = sum.byPct[pct] || 0;
+        return `<tr><td>${pct === 100 ? 'שעות רגילות (' + pctTxt(100) + ')' : 'שעות ב-' + pctTxt(pct)} · <span class="num">${hmm(min)}</span></td><td class="num">${money(min / 60 * state.settings.rate * pct / 100)}</td></tr>`;
+      }).join('');
+      if (rowsEl.dataset.h !== html) { rowsEl.innerHTML = html; rowsEl.dataset.h = html; }
+    }
     setText('b-gross', money(sum.gross));
     setText('b-tax', '−' + money(sum.incomeTax));
     setText('b-ni', '−' + money(sum.ni));
@@ -207,6 +220,7 @@
   // משמרות קבועות: שעת התחלה וסיום (סיום מעל 24 = למחרת)
   const PRESETS = [
     { name: 'בוקר', s: 6, e: 14 },
+    { name: 'בוקר מאוחר', s: 8, e: 16 },
     { name: 'ערב', s: 14, e: 22 },
     { name: 'לילה', s: 22, e: 30 },
   ];
@@ -253,15 +267,22 @@
     const day = quickDay();
     const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), p.s).getTime();
     const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), p.e).getTime();
-    if (state.shifts.some((s) => s.start === start)) { toast(`כבר יש משמרת ${p.name} בתאריך הזה`); return; }
+    if (state.shifts.some((s) => s.start === start)) { toast(`כבר יש משמרת שמתחילה ב-${pad(p.s)}:00 בתאריך הזה`); return; }
     quickCommit({ id: uid(), start, end, mode: 'auto', note: '' }, `נוספה משמרת ${p.name}`, day);
   }
 
-  function quickCourse() {
-    const day = quickDay();
-    const key = C.dateKey(day);
-    if (state.shifts.some((s) => s.type === 'course' && C.dateKey(new Date(s.start)) === key)) { toast('כבר יש יום קורס בתאריך הזה'); return; }
-    quickCommit({ id: uid(), note: '', ...C.courseShift(day, state.settings) }, 'נוסף יום קורס', day);
+  const CUSTOM_PCTS = [125, 150, 200];
+
+  function modeOptions(base) {
+    const cur = base.mode === 'custom' ? 'p' + base.pct : (base.mode || 'auto');
+    const pcts = [...new Set([...CUSTOM_PCTS, ...(base.mode === 'custom' ? [Number(base.pct)] : [])])].sort((a, b) => a - b);
+    const opts = [
+      ['auto', 'אוטומטי (שבת/חג לפי השעות)'],
+      ['regular', `כל המשמרת ב-${pctTxt(100)} (רגיל)`],
+      ...pcts.map((p) => ['p' + p, `כל המשמרת ב-${pctTxt(p)}`]),
+      ...(base.mode === 'premium' ? [['premium', `כל המשמרת באחוז שבת/חג (${pctTxt(state.settings.premiumPct)})`]] : []),
+    ];
+    return opts.map(([v, t]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${t}</option>`).join('');
   }
 
   let editing = null; // shift object or null for new
@@ -279,12 +300,8 @@
       </div>
       <label class="field"><span>כניסה</span><input type="datetime-local" id="f-start" value="${toInput(base.start)}"></label>
       <label class="field"><span>יציאה ${shift && shift.end == null ? '(ריק = עדיין במשמרת)' : ''}</span><input type="datetime-local" id="f-end" value="${base.end == null ? '' : toInput(base.end)}"></label>
-      <label class="field"><span>תעריף</span>
-        <select id="f-mode">
-          <option value="auto" ${base.mode === 'auto' || !base.mode ? 'selected' : ''}>אוטומטי (שבת/חג לפי השעות)</option>
-          <option value="regular" ${base.mode === 'regular' ? 'selected' : ''}>הכל תעריף רגיל</option>
-          <option value="premium" ${base.mode === 'premium' ? 'selected' : ''}>הכל בתעריף שבת/חג</option>
-        </select>
+      <label class="field"><span>אחוז שכר</span>
+        <select id="f-mode">${modeOptions(base)}</select>
       </label>
       <label class="field"><span>הערה (אופציונלי)</span><input type="text" id="f-note" maxlength="80" value="${esc(base.note)}"></label>
       <div class="preview" id="f-prev"></div>
@@ -301,7 +318,9 @@
     const start = fromInput($('#f-start').value);
     const endRaw = $('#f-end').value;
     const end = endRaw ? fromInput(endRaw) : null;
-    return { start, end, mode: $('#f-mode').value, note: $('#f-note').value.trim() };
+    const m = /^p(\d+)$/.exec($('#f-mode').value);
+    const mode = m ? 'custom' : $('#f-mode').value;
+    return { start, end, mode, pct: m ? Number(m[1]) : undefined, note: $('#f-note').value.trim() };
   }
 
   function validateShift(f) {
@@ -321,7 +340,8 @@
     if (err) { el.textContent = err; return; }
     const c = C.computeShift(f, state.settings);
     el.innerHTML = `<b class="num">${hmm(c.minutes)}</b> שעות · <b class="num">${money(c.pay)}</b>` +
-      (c.premiumMinutes > 0 ? ` · מתוכן <span class="num">${hmm(c.premiumMinutes)}</span> ב-${state.settings.premiumPct}%${c.labels.length ? ' (' + esc(c.labels.join(', ')) + ')' : ''}` : '');
+      c.parts.filter((p) => p.pct > 100).map((p) => ` · <span class="num">${hmm(p.ms / 60000)}</span> ב-${pctTxt(p.pct)}`).join('') +
+      (c.labels.length ? ' (' + esc(c.labels.join(', ')) + ')' : '');
   }
 
   function saveShift() {
@@ -363,11 +383,6 @@
         <label class="field"><span>נקודות זיכוי</span><input type="number" inputmode="decimal" step="0.25" min="0" data-set="creditPoints" value="${s.creditPoints}"></label>
         <label class="field"><span>פנסיה – הפרשת עובד (%)</span><input type="number" inputmode="decimal" step="0.1" min="0" data-set="pensionPct" value="${s.pensionPct}"></label>
       </div>
-      <div class="sect">יום קורס (בתעריף רגיל)</div>
-      <div class="grid2">
-        <label class="field"><span>שעות ליום קורס</span><input type="number" inputmode="decimal" step="0.5" min="0" data-set="courseHours" value="${s.courseHours}"></label>
-        <label class="field"><span>שעת התחלה</span><input type="time" data-set="courseStart" value="${s.courseStart}"></label>
-      </div>
       <div class="sect">חגים ${view.y} (מזוהים אוטומטית)</div>
       <div>${hols.map(row).join('') || '<div class="empty">אין חגים</div>'}
         <div class="add-hol"><input type="date" id="hol-date"><button class="btn" data-act="add-hol">הוסף יום חג</button></div>
@@ -392,7 +407,7 @@
   function exportCsv() {
     const sum = C.monthSummary(state.shifts, view.y, view.m, state.settings);
     const q = (v) => '"' + String(v).replace(/"/g, '""') + '"';
-    const lines = [['תאריך', 'כניסה', 'יציאה', 'שעות', 'שעות 150%', 'שכר', 'הערה'].map(q).join(',')];
+    const lines = [['תאריך', 'כניסה', 'יציאה', 'שעות', 'שעות בתוספת', 'שכר', 'הערה'].map(q).join(',')];
     for (const { shift: s, calc } of [...sum.rows].reverse()) {
       lines.push([C.dateKey(new Date(s.start)), clock(s.start), s.end == null ? '' : clock(s.end), hmm(calc.minutes), hmm(calc.premiumMinutes), calc.pay.toFixed(2), [s.type === 'course' ? 'קורס' : '', s.note || ''].filter(Boolean).join(' – ')].map(q).join(','));
     }
@@ -408,7 +423,7 @@
         const o = JSON.parse(r.result);
         if (!o || !Array.isArray(o.shifts)) throw new Error('bad');
         const clean = o.shifts.filter((s) => Number.isFinite(s.start) && (s.end == null || Number.isFinite(s.end)))
-          .map((s) => ({ id: String(s.id || uid()), start: s.start, end: s.end ?? null, mode: s.mode || 'auto', note: String(s.note || ''), ...(s.type === 'course' ? { type: 'course' } : {}) }));
+          .map((s) => ({ id: String(s.id || uid()), start: s.start, end: s.end ?? null, mode: s.mode || 'auto', ...(s.mode === 'custom' ? { pct: Number(s.pct) || 100 } : {}), note: String(s.note || ''), ...(s.type === 'course' ? { type: 'course' } : {}) }));
         if (!confirm(`לשחזר ${clean.length} משמרות? הנתונים הנוכחיים יוחלפו.`)) return;
         state = { settings: { ...clone(C.DEFAULT_SETTINGS), ...o.settings }, shifts: clean };
         save(); renderSettings(); render(); toast('הגיבוי שוחזר');
@@ -431,7 +446,6 @@
       case 'close-shift': $('#shift-dlg').close(); break;
       case 'preset': applyPreset(PRESETS[Number(t.dataset.i)]); break;
       case 'quick': quickAdd(PRESETS[Number(t.dataset.i)]); break;
-      case 'course': quickCourse(); break;
       case 'toast-undo': if (toastUndo) { const u = toastUndo; toastUndo = null; u(); toast('בוטל'); } break;
       case 'save-shift': saveShift(); break;
       case 'del': deleteShift(); break;

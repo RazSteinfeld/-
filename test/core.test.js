@@ -57,19 +57,36 @@ test('משמרות קבועות: בוקר, ערב ולילה', () => {
   close(C.computeShift({ start: at(2026, 10, 8, 22), end: at(2026, 10, 9, 6) }, S0).pay, 8 * 44);
 });
 
-test('יום קורס: 10 שעות בתעריף רגיל, גם בשישי', () => {
-  const tue = C.courseShift(new Date(2026, 9, 6), S());
-  assert.equal(tue.type, 'course');
-  assert.equal(new Date(tue.end).getHours(), 18);
-  close(C.computeShift(tue, S()).pay, 10 * 44);
-  // שישי: 08:00–18:00 – חלק מהשעות בתוך חלון שבת, אבל קורס תמיד רגיל
-  const fri = C.courseShift(new Date(2026, 9, 9), S());
-  close(C.computeShift(fri, S()).pay, 10 * 44);
-  const s = S(); s.courseHours = 8; s.courseStart = '09:30';
-  const c = C.courseShift(new Date(2026, 9, 6), s);
-  assert.equal(new Date(c.start).getHours(), 9);
-  assert.equal(new Date(c.end).getHours(), 17);
-  assert.equal(new Date(c.end).getMinutes(), 30);
+test('בוקר מאוחר 08:00–16:00: 8 שעות, גם בשישי (עד 16:00 רגיל)', () => {
+  close(C.computeShift({ start: at(2026, 10, 6, 8), end: at(2026, 10, 6, 16) }, S()).pay, 8 * 44);
+  close(C.computeShift({ start: at(2026, 10, 9, 8), end: at(2026, 10, 9, 16) }, S()).pay, 8 * 44);
+});
+
+test('אחוז שכר ידני למשמרת: 125 / 150 / 200', () => {
+  const base = { start: at(2026, 10, 6, 8), end: at(2026, 10, 6, 16), mode: 'custom' };
+  close(C.computeShift({ ...base, pct: 125 }, S()).pay, 8 * 44 * 1.25);
+  close(C.computeShift({ ...base, pct: 150 }, S()).pay, 8 * 44 * 1.5);
+  close(C.computeShift({ ...base, pct: 200 }, S()).pay, 8 * 44 * 2);
+  const c = C.computeShift({ ...base, pct: 125 }, S());
+  assert.equal(c.premiumMinutes, 480);
+  assert.equal(c.regularMinutes, 0);
+  // אחוז ידני גובר על חישוב שבת אוטומטי
+  const fri = { start: at(2026, 10, 9, 14), end: at(2026, 10, 9, 18), mode: 'custom', pct: 125 };
+  close(C.computeShift(fri, S()).pay, 4 * 44 * 1.25);
+  // 100 ללא pct תקין – נופל חזרה ל-100%
+  close(C.computeShift({ ...base }, S()).pay, 8 * 44);
+});
+
+test('סיכום חודשי מפורק לפי אחוזי שכר', () => {
+  const shifts = [
+    { id: 'a', start: at(2026, 10, 6, 8), end: at(2026, 10, 6, 16) },                         // 8h @100
+    { id: 'b', start: at(2026, 10, 7, 8), end: at(2026, 10, 7, 12), mode: 'custom', pct: 200 }, // 4h @200
+    { id: 'c', start: at(2026, 10, 9, 14), end: at(2026, 10, 9, 18) },                       // 2h @100 + 2h @150
+  ];
+  const m = C.monthSummary(shifts, 2026, 9, S());
+  assert.deepEqual(m.byPct, { 100: 600, 150: 120, 200: 240 });
+  close(m.gross, 10 * 44 + 2 * 66 + 4 * 88);
+  assert.equal(m.premiumMinutes, 360);
 });
 
 test('חגי תשפ"ז מזוהים נכון', () => {

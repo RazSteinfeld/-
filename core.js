@@ -13,8 +13,6 @@
     premiumEnd: '04:00',     // ראשון / מוצאי חג – סיום התעריף המוגדל
     creditPoints: 2.25,      // נקודות זיכוי (2.25 = תושב ישראל גבר, 2.75 = אישה)
     pensionPct: 6,           // הפרשת עובד לפנסיה (%)
-    courseHours: 10,         // אורך יום קורס (שעות), בתעריף רגיל
-    courseStart: '08:00',    // שעת התחלה של יום קורס
     disabledHolidays: [],    // חגים שזוהו אוטומטית ומבוטלים ידנית (YYYY-MM-DD)
     extraHolidays: [],       // ימי חג שנוספו ידנית (YYYY-MM-DD)
   };
@@ -122,38 +120,38 @@
   const overlap = (a0, a1, b0, b1) => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
 
   /* ---------- משמרת בודדת ---------- */
-  /** shift: {start, end|null, mode?: 'auto'|'regular'|'premium'} (ms) */
+  /** shift: {start, end|null, mode?: 'auto'|'regular'|'premium'|'custom', pct?} (ms)
+   *  auto – שבת/חג לפי השעות; regular – הכל 100%; premium – הכל באחוז שבת/חג;
+   *  custom – כל המשמרת באחוז ידני (pct, למשל 125 / 150 / 200). */
   function computeShift(shift, settings, now = Date.now()) {
     const end = shift.end == null ? now : shift.end;
     const totalMs = Math.max(0, end - shift.start);
     const wins = premiumWindows(shift.start, end, settings);
-    let premMs;
-    if (shift.mode === 'regular') premMs = 0;
-    else if (shift.mode === 'premium') premMs = totalMs;
-    else premMs = mergeWindows(wins).reduce((s, w) => s + overlap(shift.start, end, w[0], w[1]), 0);
-    const regMs = totalMs - premMs;
-    const rate = settings.rate, mult = settings.premiumPct / 100;
-    const pay = (regMs * rate + premMs * rate * mult) / 3600000;
     const labels = [];
-    if (shift.mode === 'premium') labels.push('מוגדר ידנית');
-    else if (shift.mode !== 'regular') {
+    let parts; // [{pct, ms}] – כמה זמן בכל אחוז שכר
+    if (shift.mode === 'custom') {
+      parts = [{ pct: Number(shift.pct) || 100, ms: totalMs }];
+    } else if (shift.mode === 'regular') {
+      parts = [{ pct: 100, ms: totalMs }];
+    } else if (shift.mode === 'premium') {
+      parts = [{ pct: settings.premiumPct, ms: totalMs }];
+    } else {
+      const premMs = mergeWindows(wins).reduce((s, w) => s + overlap(shift.start, end, w[0], w[1]), 0);
+      parts = [{ pct: 100, ms: totalMs - premMs }, { pct: settings.premiumPct, ms: premMs }];
       const hit = wins.filter((w) => overlap(shift.start, end, w.s, w.e) > 0);
       const names = [...new Set(hit.filter((w) => w.kind === 'holiday').map((w) => w.name))];
       if (names.length) labels.push(...names);
       else if (hit.length) labels.push('שבת');
     }
+    parts = parts.filter((p) => p.ms > 0);
+    const pay = parts.reduce((s, p) => s + p.ms * settings.rate * p.pct / 100, 0) / 3600000;
+    const premMs = parts.filter((p) => p.pct > 100).reduce((s, p) => s + p.ms, 0);
+    const regMs = totalMs - premMs;
     return {
-      open: shift.end == null, totalMs, premMs, regMs, pay,
+      open: shift.end == null, totalMs, premMs, regMs, pay, parts,
       minutes: totalMs / 60000, premiumMinutes: premMs / 60000, regularMinutes: regMs / 60000,
       labels,
     };
-  }
-
-  /** יום קורס: משך קבוע בתעריף רגיל (ללא תוספת שבת/חג). day = Date של היום */
-  function courseShift(day, settings) {
-    const [h, m] = hm(settings.courseStart);
-    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m).getTime();
-    return { start, end: start + settings.courseHours * 3600000, mode: 'regular', type: 'course' };
   }
 
   /* ---------- ברוטו → נטו ---------- */
@@ -184,8 +182,10 @@
       .map((s) => ({ shift: s, calc: computeShift(s, settings, now) }));
     const sum = (f) => rows.reduce((t, r) => t + f(r.calc), 0);
     const gross = sum((c) => c.pay);
+    const byPct = {}; // אחוז שכר → דקות
+    for (const r of rows) for (const p of r.calc.parts) byPct[p.pct] = (byPct[p.pct] || 0) + p.ms / 60000;
     return {
-      rows, count: rows.length,
+      rows, count: rows.length, byPct,
       minutes: sum((c) => c.minutes),
       premiumMinutes: sum((c) => c.premiumMinutes),
       regularMinutes: sum((c) => c.regularMinutes),
@@ -196,6 +196,6 @@
   return {
     DEFAULT_SETTINGS, TAX, HOLIDAYS,
     dateKey, parseKey, holidayList, holidayName, premiumWindows, mergeWindows,
-    computeShift, courseShift, netFromGross, monthSummary,
+    computeShift, netFromGross, monthSummary,
   };
 });
