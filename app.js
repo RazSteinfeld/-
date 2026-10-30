@@ -492,6 +492,12 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden) updateLive(); });
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    // כשגרסה חדשה של האפליקציה מותקנת – לטעון מחדש פעם אחת כדי להציג אותה מיד
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController && !reloaded) { reloaded = true; location.reload(); }
+    });
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 })();
