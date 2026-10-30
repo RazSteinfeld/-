@@ -592,18 +592,39 @@
     download(`attendance-${view.y}-${pad(view.m + 1)}.csv`, '﻿' + lines.join('\r\n'), 'text/csv;charset=utf-8');
   }
 
+  // ממיר זמן מכל פורמט סביר (מספר, מספר כמחרוזת, תאריך ISO) למילי-שניות; NaN אם לא תקין
+  const nShifts = (n) => (n === 1 ? 'משמרת אחת' : n + ' משמרות');
+  const toMs = (v) => {
+    if (typeof v === 'number') return v;
+    if (typeof v === 'string' && v.trim() !== '') return /^\d+$/.test(v.trim()) ? Number(v) : Date.parse(v);
+    return NaN;
+  };
+
   function importBackup(file) {
     const r = new FileReader();
+    r.onerror = () => toast('לא ניתן לקרוא את הקובץ');
     r.onload = () => {
-      try {
-        const o = JSON.parse(r.result);
-        if (!o || !Array.isArray(o.shifts)) throw new Error('bad');
-        const clean = o.shifts.filter((s) => Number.isFinite(s.start) && (s.end == null || Number.isFinite(s.end)))
-          .map((s) => ({ id: String(s.id || uid()), start: s.start, end: s.end ?? null, mode: s.mode || 'auto', ...(s.mode === 'custom' ? { pct: Number(s.pct) || 100 } : {}), note: String(s.note || ''), ...(s.type === 'course' ? { type: 'course' } : {}) }));
-        if (!confirm(`לשחזר ${clean.length} משמרות? הנתונים הנוכחיים יוחלפו.`)) return;
-        state = { settings: { ...clone(C.DEFAULT_SETTINGS), ...o.settings }, shifts: clean, deleted: { ...state.deleted }, settingsAt: state.settingsAt };
-        save(); renderSettings(); render(); toast('הגיבוי שוחזר');
-      } catch (e) { toast('קובץ גיבוי לא תקין'); }
+      let o;
+      try { o = JSON.parse(r.result); } catch (e) { toast('הקובץ אינו קובץ גיבוי (JSON לא תקין)'); return; }
+      // תומך בגיבוי רגיל, בגיבוי עטוף ב-state, ובמערך משמרות גולמי
+      const src = Array.isArray(o) ? { shifts: o } : (o && o.state && Array.isArray(o.state.shifts) ? o.state : o);
+      if (!src || !Array.isArray(src.shifts)) { toast('בקובץ לא נמצאו משמרות – זה לא קובץ גיבוי של האפליקציה'); return; }
+      const clean = [];
+      for (const s of src.shifts) {
+        const start = toMs(s && s.start), end = s && s.end != null ? toMs(s.end) : null;
+        if (!Number.isFinite(start) || (end !== null && !Number.isFinite(end))) continue;
+        clean.push({ id: String(s.id || uid()), start, end, mode: s.mode || 'auto', ...(s.mode === 'custom' ? { pct: Number(s.pct) || 100 } : {}), note: String(s.note || ''), ...(s.type === 'course' ? { type: 'course' } : {}) });
+      }
+      const skipped = src.shifts.length - clean.length;
+      if (!clean.length) { toast(src.shifts.length ? 'לא נמצאה אף משמרת תקינה בקובץ' : 'הגיבוי ריק – אין בו משמרות'); return; }
+      if (state.shifts.length && !confirm(`לשחזר ${nShifts(clean.length)}? הנתונים הנוכחיים (${nShifts(state.shifts.length)}) יוחלפו.`)) return;
+      state = { settings: { ...clone(C.DEFAULT_SETTINGS), ...src.settings }, shifts: clean, deleted: { ...state.deleted }, settingsAt: state.settingsAt };
+      save();
+      // מעבר לחודש של המשמרת האחרונה, כדי שיהיה ברור שהשחזור הצליח
+      const latest = new Date(Math.max(...clean.map((x) => x.start)));
+      view.y = latest.getFullYear(); view.m = latest.getMonth();
+      $('#settings-dlg').close(); render();
+      toast(`שוחזרו ${nShifts(clean.length)}` + (skipped ? ` (${skipped} דולגו – לא תקינות)` : '') + ` · מוצג ${monthTitle()}`);
     };
     r.readAsText(file);
   }
@@ -663,7 +684,7 @@
       state.settings.disabledHolidays = [...set];
       save(); render();
     }
-    if (e.target.id === 'import-file' && e.target.files[0]) importBackup(e.target.files[0]);
+    if (e.target.id === 'import-file' && e.target.files[0]) { importBackup(e.target.files[0]); e.target.value = ''; }
   });
 
   /* ---------- boot ---------- */
