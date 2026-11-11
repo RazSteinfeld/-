@@ -95,7 +95,7 @@
 
   /* ---------- סנכרון לענן ---------- */
   const cloud = { status: 'off', msg: '' }; // off | idle | syncing | error | offline
-  let syncing = false, syncAgain = false, syncTimer = null;
+  let syncing = false, syncAgain = false, syncTimer = null, firstSync = true;
   const dataForSync = () => ({ v: 1, settings: state.settings, settingsAt: state.settingsAt, shifts: state.shifts, deleted: state.deleted });
 
   function setCloud(status, msg = '') { cloud.status = status; cloud.msg = msg; renderCloudUI(); }
@@ -150,7 +150,11 @@
     const seq = saveSeq;
     setCloud('syncing');
     try {
-      const pr = await Sync.pull(cfg);
+      // בפתיחה ראשונה (או כשאין משמרות מקומיות) מורידים תמיד את הגיבוי המלא ולא סומכים על etag –
+      // כך נתונים שנמחקו מהטלפון חוזרים מהענן
+      const full = firstSync || !state.shifts.length;
+      const pr = await Sync.pull(full ? { ...cfg, etag: null } : cfg);
+      firstSync = false;
       let etag = pr.notModified ? cfg.etag : pr.etag;
       let toPush = null;
       if (!pr.notModified) {
