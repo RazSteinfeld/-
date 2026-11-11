@@ -278,7 +278,14 @@
   }
 
   function renderList(sum) {
-    if (!sum.rows.length) return '<div class="empty">אין משמרות בחודש הזה.<br>לחץ על "כניסה" או הוסף משמרת ידנית.</div>';
+    if (!sum.rows.length) {
+      // יש משמרות בחודשים אחרים? מציעים לעבור לחודש הקרוב ביותר שבו יש
+      const mid = new Date(view.y, view.m, 15).getTime();
+      const near = state.shifts.length ? state.shifts.reduce((a, b) => (Math.abs(b.start - mid) < Math.abs(a.start - mid) ? b : a)) : null;
+      const nd = near ? new Date(near.start) : null;
+      const hint = nd ? `<br><button class="btn" data-act="goto" data-y="${nd.getFullYear()}" data-m="${nd.getMonth()}">יש משמרות ב${esc(nd.toLocaleDateString('he-IL', { month: 'long', year: 'numeric' }))} – מעבר</button>` : '';
+      return `<div class="empty">אין משמרות בחודש הזה.${hint}<br>${nd ? '' : 'לחץ על "כניסה" או הוסף משמרת ידנית.'}</div>`;
+    }
     return sum.rows.map(({ shift: s, calc }) => {
       const d = new Date(s.start);
       const wd = d.toLocaleDateString('he-IL', { weekday: 'short' });
@@ -660,6 +667,7 @@
       case 'cloud-connect': cloudConnect(); break;
       case 'cloud-sync': syncNow(); break;
       case 'cloud-off': cloudDisconnect(); break;
+      case 'goto': view.y = Number(t.dataset.y); view.m = Number(t.dataset.m); render(); break;
       case 'banner-off': try { localStorage.setItem('attendance.banner', '0'); } catch (err) { /* ignore */ } render(); break;
     }
   });
@@ -697,6 +705,8 @@
   window.addEventListener('online', () => { if (Sync.getConfig()) syncNow(); });
   setInterval(() => { if (!document.hidden && Sync.getConfig()) syncNow(); }, 60000);
   if (Sync.getConfig()) syncNow();
+  // מבקש מהדפדפן לא למחוק את נתוני האפליקציה כשחסר מקום (אחסון קבוע)
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* ignore */ }
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     // כשגרסה חדשה של האפליקציה מותקנת – לטעון מחדש פעם אחת כדי להציג אותה מיד
