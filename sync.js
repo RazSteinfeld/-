@@ -101,10 +101,9 @@
   }
 
   async function push(cfg, data) {
-    const res = await request(cfg.token, '/gists/' + cfg.gistId, {
-      method: 'PATCH',
-      body: JSON.stringify({ files: { [FILE]: { content: JSON.stringify(data) } } }),
-    });
+    const body = JSON.stringify({ files: { [FILE]: { content: JSON.stringify(data) } } });
+    // keepalive: השמירה מסתיימת גם אם האפליקציה נסגרת באמצע (עד ~64KB)
+    const res = await request(cfg.token, '/gists/' + cfg.gistId, { method: 'PATCH', body, keepalive: body.length < 60000 });
     if (!res.ok) throw new SyncError('http', 'שמירה בענן נכשלה (' + res.status + ')');
     return { etag: res.headers.get('etag') };
   }

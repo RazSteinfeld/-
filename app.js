@@ -3,6 +3,7 @@
   const C = window.Core;
   const KEY = 'attendance.v1';
   const MAX_SHIFT_H = 16;
+  const BUILD = '2026-11-22';
 
   const $ = (s, r = document) => r.querySelector(s);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -116,10 +117,11 @@
     if (cloud.status === 'syncing') return 'מסנכרן…';
     if (cloud.status === 'error') return cloud.msg || 'שגיאה בסנכרון';
     if (cloud.status === 'offline') return 'אין חיבור לאינטרנט – יישמר בענן כשהחיבור יחזור';
+    if (cfg.dirty) return 'שינויים ממתינים לשמירה בענן…';
     return `מחובר ל-GitHub (${cfg.login || ''}) · ` + (cfg.lastSync ? 'סונכרן לאחרונה ב-' + clock(cfg.lastSync) : 'עדיין לא סונכרן');
   }
 
-  function scheduleSync(delay = 2500) {
+  function scheduleSync(delay = 800) {
     clearTimeout(syncTimer);
     syncTimer = setTimeout(syncNow, delay);
   }
@@ -566,6 +568,7 @@
     if (cfg) {
       return `<div class="cloud-card">
         <div id="cloud-status" class="cloud-status">${esc(cloudLine(cfg))}</div>
+        <div class="note">במכשיר: ${nShifts(state.shifts.length)} · גרסה ${BUILD}</div>
         <p class="note">השינויים נשמרים אוטומטית. אפשר להתחבר עם אותו טוקן גם מטלפון נוסף והנתונים יתאחדו.</p>
         <div class="actions"><button class="btn" data-act="cloud-sync">סנכרן עכשיו</button><button class="btn danger" data-act="cloud-off">ניתוק</button></div>
       </div>`;
@@ -628,14 +631,17 @@
       }
       const skipped = src.shifts.length - clean.length;
       if (!clean.length) { toast(src.shifts.length ? 'לא נמצאה אף משמרת תקינה בקובץ' : 'הגיבוי ריק – אין בו משמרות'); return; }
-      if (state.shifts.length && !confirm(`לשחזר ${nShifts(clean.length)}? הנתונים הנוכחיים (${nShifts(state.shifts.length)}) יוחלפו.`)) return;
-      state = { settings: { ...clone(C.DEFAULT_SETTINGS), ...src.settings }, shifts: clean, deleted: { ...state.deleted }, settingsAt: state.settingsAt };
+      // ייבוא רק מוסיף: משמרות שכבר קיימות (לפי מזהה) נשארות כמו שהן, ושום דבר לא נמחק
+      const have = new Set(state.shifts.map((x) => x.id));
+      const fresh = clean.filter((x) => !have.has(x.id));
+      for (const x of fresh) { state.shifts.push(x); delete state.deleted[x.id]; }
+      if (!state.settingsAt && src.settings) state.settings = { ...clone(C.DEFAULT_SETTINGS), ...src.settings };
       save();
-      // מעבר לחודש של המשמרת האחרונה, כדי שיהיה ברור שהשחזור הצליח
+      // מעבר לחודש של המשמרת האחרונה בקובץ, כדי שיהיה ברור שהייבוא הצליח
       const latest = new Date(Math.max(...clean.map((x) => x.start)));
       view.y = latest.getFullYear(); view.m = latest.getMonth();
       $('#settings-dlg').close(); render();
-      toast(`שוחזרו ${nShifts(clean.length)}` + (skipped ? ` (${skipped} דולגו – לא תקינות)` : '') + ` · מוצג ${monthTitle()}`);
+      toast(`נוספו ${nShifts(fresh.length)}` + (clean.length - fresh.length ? ` · ${clean.length - fresh.length} כבר היו` : '') + (skipped ? ` · ${skipped} דולגו (לא תקינות)` : '') + ` · מוצג ${monthTitle()}`);
     };
     r.readAsText(file);
   }
@@ -706,6 +712,7 @@
     if (!document.hidden) { updateLive(); if (Sync.getConfig()) syncNow(); }
     else if (Sync.getConfig()) { clearTimeout(syncTimer); syncNow(); } // נשמר מיד כשעוברים לאפליקציה אחרת
   });
+  window.addEventListener('pagehide', () => { if (Sync.getConfig()) { clearTimeout(syncTimer); syncNow(); } });
   window.addEventListener('online', () => { if (Sync.getConfig()) syncNow(); });
   setInterval(() => { if (!document.hidden && Sync.getConfig()) syncNow(); }, 60000);
   if (Sync.getConfig()) syncNow();
